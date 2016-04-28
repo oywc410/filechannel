@@ -3,9 +3,13 @@ package filechannel
 import (
 	"testing"
 	"os"
+	"runtime"
 )
 
 func init() {
+
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	err := os.RemoveAll("test/chanel")
 	if err != nil {
 		panic(err)

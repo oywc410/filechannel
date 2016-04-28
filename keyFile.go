@@ -4,17 +4,26 @@ import (
 	"os"
 	"encoding/binary"
 	"sync"
+	"io"
 )
 
 type keyFile struct {
 	filePath string
-	fr *os.File
+	readFile *os.File
+	writeFile *os.File
 	fileCountLock sync.RWMutex
+	readFileLock sync.Mutex
+	writeFileLock sync.Mutex
 }
 
 func NewKeyFile(filePath string) (*keyFile, error) {
 
-	fr, err := os.OpenFile(filePath, os.O_CREATE | os.O_WRONLY | os.O_RDWR, 0666)
+	writeFile, err := os.OpenFile(filePath, os.O_CREATE | os.O_RDWR , 0644)
+	if err != nil {
+		return nil, err
+	}
+
+	readFile, err := os.Open(filePath)
 
 	if err != nil {
 		return nil, err
@@ -22,41 +31,78 @@ func NewKeyFile(filePath string) (*keyFile, error) {
 
 	return &keyFile{
 		filePath: filePath,
-		fr: fr,
+		readFile: readFile,
+		writeFile: writeFile,
 	}, nil
 }
 
 func (f *keyFile)GetDataFileCount() (uint64, error) {
 	f.fileCountLock.RLock()
-	defer f.fileCountLock.RUnlock()
-	f.fr.Seek(0)
+	f.readFileLock.Lock()
+	defer func() {
+		f.readFileLock.Unlock()
+		f.fileCountLock.RUnlock()
+	}()
+	f.readFile.Seek(0, 0)
 
 	buf := make([]byte, 8)
-	n, err := f.fr.Read(buf)
+	n, err := f.readFile.Read(buf)
 	if err != nil {
-		return 0, nil
+		if err == io.EOF {
+			return 0, nil
+		}
+		return 0, err
 	}
 
 	return binary.BigEndian.Uint64(buf[:n]), nil
 }
 
-func (f *keyFile)AddDataFileCount() error {
+func (f *keyFile)AddDataFileCount() (uint64, error) {
 	f.fileCountLock.Lock()
-	defer f.fileCountLock.Unlock()
-	count, err := f.GetDataFileCount()
-	count++
-	if err != nil {
+	f.writeFileLock.Lock()
+	defer func() {
+		f.writeFileLock.Unlock()
+		f.fileCountLock.Unlock()
+	}()
+
+	f.writeFile.Seek(0, 0)
+	buf := make([]byte, 8)
+	n, err := f.writeFile.Read(buf)
+	if err != nil && err != io.EOF {
 		return 0, err
 	}
+	var count uint64
+	if err != io.EOF {
+		count = binary.BigEndian.Uint64(buf[:n])
+	}
+	count++
 
-	f.fr.Seek(0)
-	var buf = make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, count)
-	_, err = f.fr.Write(buf)
-	return err
+	f.writeFile.Seek(0, 0)
+	_, err = f.writeFile.WriteAt(buf, 0)
+
+	return count, err
 }
 
-
 func (f *keyFile)CloseFile() error {
-	return f.fr.Close()
+	f.fileCountLock.Lock()
+	f.writeFileLock.Lock()
+
+	defer func() {
+		f.writeFileLock.Unlock()
+		f.fileCountLock.Unlock()
+	}()
+
+	var err error
+	err = f.readFile.Close()
+	if err != nil {
+		return err
+	}
+
+	err = f.writeFile.Close()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

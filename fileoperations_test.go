@@ -4,9 +4,12 @@ import (
 	"os"
 	"testing"
 	"path/filepath"
+	"runtime"
 )
 
 func init() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	err := os.RemoveAll(filepath.Join("test", "file_test"))
 	if err != nil {
 		panic(err)
