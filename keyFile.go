@@ -11,7 +11,6 @@ type keyFile struct {
 	filePath string
 	readFile *os.File
 	writeFile *os.File
-	fileCountLock sync.RWMutex
 	readFileLock sync.Mutex
 	writeFileLock sync.Mutex
 }
@@ -36,15 +35,11 @@ func NewKeyFile(filePath string) (*keyFile, error) {
 	}, nil
 }
 
-func (f *keyFile)GetDataFileCount() (uint64, error) {
-	f.fileCountLock.RLock()
+func (f *keyFile)getDate(index int64) (uint64, error) {
 	f.readFileLock.Lock()
-	defer func() {
-		f.readFileLock.Unlock()
-		f.fileCountLock.RUnlock()
-	}()
-	f.readFile.Seek(0, 0)
+	defer f.readFileLock.Unlock()
 
+	f.readFile.Seek(index, 0)
 	buf := make([]byte, 8)
 	n, err := f.readFile.Read(buf)
 	if err != nil {
@@ -57,13 +52,24 @@ func (f *keyFile)GetDataFileCount() (uint64, error) {
 	return binary.BigEndian.Uint64(buf[:n]), nil
 }
 
-func (f *keyFile)AddDataFileCount() (uint64, error) {
-	f.fileCountLock.Lock()
+func (f *keyFile)setDate(index int64, n uint64) error {
 	f.writeFileLock.Lock()
-	defer func() {
-		f.writeFileLock.Unlock()
-		f.fileCountLock.Unlock()
-	}()
+	defer f.writeFileLock.Unlock()
+
+	buf := make([]byte, 8)
+	f.writeFile.Seek(index, 0)
+	binary.BigEndian.PutUint64(buf, n)
+	_, err := f.writeFile.WriteAt(buf, 0)
+	if err != nil {
+		return err
+	}
+	//return f.writeFile.Sync()
+	return nil
+}
+
+func (f *keyFile)nextDate(index int64) (uint64, error) {
+	f.writeFileLock.Lock()
+	defer f.writeFileLock.Unlock()
 
 	f.writeFile.Seek(0, 0)
 	buf := make([]byte, 8)
@@ -80,18 +86,39 @@ func (f *keyFile)AddDataFileCount() (uint64, error) {
 	binary.BigEndian.PutUint64(buf, count)
 	f.writeFile.Seek(0, 0)
 	_, err = f.writeFile.WriteAt(buf, 0)
-
-	return count, err
+	if err != nil {
+		return 0, err
+	}
+	//return count, f.writeFile.Sync()
+	return count, nil
 }
 
+func (f *keyFile)flushAllDate() error {
+	return f.writeFile.Sync()
+}
+
+func (f *keyFile)GetDataFileCount() (uint64, error) {
+	return f.getDate(0)
+}
+
+func (f *keyFile)AddDataFileCount() (uint64, error) {
+	return f.nextDate(0)
+}
+
+func (f *keyFile)GetStartFileIndex() (uint64, error) {
+	return f.getDate(1)
+}
+
+func (f *keyFile)AddStartFileIndex() (uint64, error) {
+	return f.nextDate(1)
+}
+
+
 func (f *keyFile)CloseFile() error {
-	f.fileCountLock.Lock()
+
 	f.writeFileLock.Lock()
 
-	defer func() {
-		f.writeFileLock.Unlock()
-		f.fileCountLock.Unlock()
-	}()
+	defer f.writeFileLock.Unlock()
 
 	var err error
 	err = f.readFile.Close()
