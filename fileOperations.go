@@ -4,6 +4,7 @@ import (
 	"os"
 	"errors"
 	"path/filepath"
+	"strconv"
 )
 
 type channelFiles struct {
@@ -34,6 +35,18 @@ func folderCheck(dirpath string) (string, error) {
 
 func openFileStart(dirpath string, fileKeyName string) (*channelFiles, error) {
 	keyFile, err := os.OpenFile(fileKeyName + ".key_data", os.O_CREATE | os.O_WRONLY | os.O_RDWR, 0666)
+
+	if err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, 1024)
+	n, err = keyFile.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	fileCount, err := strconv.Atoi(string(buf[:n]))
 
 	if err != nil {
 		return nil, err
